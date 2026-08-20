@@ -185,5 +185,5 @@ async function evaluateTurn(ctx: Context, config: Config, session: Session, turn
     .map((b) => (b as { type: 'text'; text: string }).text)
     .join('')
   const parsed = parseEvalJson(text || '{}', turn)
-  session.append('advisor/eval', parsed)
+  ;(session.append as any)('advisor/eval', parsed, { ignorable: true })
 }
