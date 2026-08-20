@@ -15,8 +15,11 @@ import type {} from './types.ts'
 /** Cordis plugin name. */
 export const name = 'dsh-advisor'
 
-/** Required services: session store and LLM streaming. */
-export const inject = ['sessions', 'llm']
+/** Required services: session store, agent registry, subagent runtime, and LLM streaming (fallback). */
+export const inject = ['sessions', 'agents', 'subagents', 'llm']
+
+/** Per-session last successful wake turn; used for cross-turn immuneTurns fuse (oh-my-pi advisor.immuneTurns:3). */
+const lastWakeBySession = new Map<string, number>()
 
 /** Default prompt template with `{turn}`, `{goal}` and `{transcript}` placeholders. */
 export const DEFAULT_PROMPT_TEMPLATE = [
@@ -43,6 +46,8 @@ export interface Config {
   autoContinue?: boolean
   /** Max advisor wakes per turn (1-5, default 1). */
   maxAdvisorRounds?: number
+  /** Cross-turn downgrade: after a wake, next N primary turns skip wake even if verdict is needs-attention/off-track (0-10, default 3). */
+  immuneTurns?: number
 }
 
 export const Config: z<Config> = z.object({
@@ -51,6 +56,7 @@ export const Config: z<Config> = z.object({
   promptTemplate: z.string(),
   autoContinue: z.boolean().default(false),
   maxAdvisorRounds: z.number().step(1).min(1).max(5).default(1),
+  immuneTurns: z.number().step(1).min(0).max(10).default(3),
 })
 
 /** Valid verdict values the model may produce. */
@@ -64,6 +70,11 @@ const VERDICTS = ['ok', 'needs-attention', 'off-track'] as const
  * @param config - validated plugin config.
  */
 export function apply(ctx: Context, config: Config): void {
+  // Clean per-session immune state when session leaves the store.
+  // oxlint-disable-next-line typescript/no-explicit-any -- cordis event map augmentation needs loose typing until tsc sees the declaration merge
+  ;(ctx as any).on('session/disposed', (session: Session) => {
+    lastWakeBySession.delete(session.id as unknown as string)
+  })
   // oxlint-disable-next-line typescript/no-explicit-any -- cordis event map augmentation needs loose typing until tsc sees the declaration merge
   ;(ctx as any).on('session/event', (session: Session, event: SessionEvent) => {
     if (event.type !== 'turn/end') return
@@ -152,7 +163,27 @@ function parseEvalJson(raw: string, turn: number): AdvisorEvalData {
   }
 }
 
-/** Evaluate one turn via LLM and append the `advisor/eval` event. */
+/** Pick a subagent provider that supports toolFilter, preferring fork > spawn. */
+function pickSubagentProvider(ctx: Context): string | undefined {
+  const subagents = (ctx as unknown as { subagents?: { getProvider?: (n: string) => unknown; list?: () => string[] } }).subagents
+  if (subagents === undefined) return undefined
+  if (typeof subagents.getProvider === 'function') {
+    if (subagents.getProvider('fork') !== undefined) return 'fork'
+    if (subagents.getProvider('spawn') !== undefined) return 'spawn'
+  }
+  if (typeof subagents.list === 'function') {
+    const names = subagents.list()
+    if (names.length > 0) return names[0]
+  }
+  return 'fork'
+}
+
+/** Collect text from ContentBlock array. */
+function textFromBlocks(blocks: readonly { type: string; text?: string }[]): string {
+  return blocks.filter((b) => b.type === 'text' && typeof b.text === 'string').map((b) => b.text).join('\n')
+}
+
+/** Evaluate one turn via subagent sidecar (with LLM fallback) and append the `advisor/eval` event. */
 async function evaluateTurn(ctx: Context, config: Config, session: Session, turn: number): Promise<void> {
   const route = resolveRoute(config, session)
   if (route === undefined) {
@@ -163,27 +194,68 @@ async function evaluateTurn(ctx: Context, config: Config, session: Session, turn
   const transcript = buildTranscript(session)
   const goal = buildGoal(session)
   const prompt = template.replaceAll('{turn}', String(turn)).replaceAll('{goal}', goal).replaceAll('{transcript}', transcript)
-  const messages = [createUserMessage({
-    content: [{ type: 'text', text: prompt }],
-    source: { kind: 'plugin', plugin: 'dsh-advisor' },
-  })]
-  const assembler = new BlockAssembler()
-  for await (const chunk of ctx.llm.stream({
-    provider: route.provider,
-    model: route.model,
-    messages,
-    maxTokens: 512,
-  })) {
-    assembler.push(chunk)
+
+  let text: string | undefined
+
+  // Try subagent sidecar that reuses dsh tools (read/grep/glob) for verification.
+  const agents = (ctx as unknown as { agents?: { get?: (id: unknown) => unknown; currentInitiator?: () => unknown } }).agents
+  let parentAgent: unknown
+  try {
+    parentAgent = agents?.get?.(session.id) ?? agents?.currentInitiator?.()
+  } catch {
+    parentAgent = undefined
   }
-  const finish = assembler.finish
-  if (finish !== undefined && finish.kind !== 'stop' && finish.kind !== 'tool-calls') {
-    if (finish.kind === 'error' || finish.kind === 'aborted') {
-      throw new Error(finish.failure.message)
+  const subagents = (ctx as unknown as { subagents?: { start?: (name: string, req: unknown) => Promise<{ result: Promise<{ output: readonly { type: string; text?: string }[] }>; dispose: () => Promise<void> }> } }).subagents
+  if (parentAgent !== undefined && parentAgent !== null && subagents?.start !== undefined) {
+    const providerName = pickSubagentProvider(ctx)
+    if (providerName !== undefined) {
+      try {
+        const signal = AbortSignal.timeout(30_000)
+        const run = await subagents.start(providerName, {
+          parent: parentAgent,
+          prompt: [{ type: 'text', text: prompt }],
+          toolFilter: { allow: ['read', 'grep', 'glob'] },
+          maxDepth: 1,
+          signal,
+          label: 'advisor-eval',
+          ...(route.provider !== undefined && route.model !== undefined ? { agentOptions: { provider: route.provider, model: route.model } } : {}),
+        })
+        try {
+          const result = await run.result
+          text = textFromBlocks(result.output as readonly { type: string; text?: string }[])
+        } finally {
+          await run.dispose().catch(() => {})
+        }
+      } catch (error: unknown) {
+        ctx.logger.warn(`dsh-advisor: subagent sidecar failed for turn ${turn}, falling back to llm.stream: ${String(error)}`)
+      }
     }
   }
-  const blocks = assembler.blocks() as unknown
-  const text = textFromContent(blocks)
+
+  // Fallback: direct LLM stream (original path).
+  if (text === undefined) {
+    const messages = [createUserMessage({
+      content: [{ type: 'text', text: prompt }],
+      source: { kind: 'plugin', plugin: 'dsh-advisor' },
+    })]
+    const assembler = new BlockAssembler()
+    for await (const chunk of ctx.llm.stream({
+      provider: route.provider,
+      model: route.model,
+      messages,
+      maxTokens: 512,
+    })) {
+      assembler.push(chunk)
+    }
+    const finish = assembler.finish
+    if (finish !== undefined && finish.kind !== 'stop' && finish.kind !== 'tool-calls') {
+      if (finish.kind === 'error' || finish.kind === 'aborted') {
+        throw new Error(finish.failure.message)
+      }
+    }
+    const blocks = assembler.blocks() as unknown
+    text = textFromContent(blocks)
+  }
   const parsed = parseEvalJson(text || '{}', turn)
   ;(session.append as any)('advisor/eval', parsed, { ignorable: true })
 
@@ -198,15 +270,21 @@ async function evaluateTurn(ctx: Context, config: Config, session: Session, turn
     ctx.logger.info(`dsh-advisor: skip wake for turn ${turn} — maxAdvisorRounds ${maxRounds} reached (count=${count})`)
     return
   }
-  // Break condition 2: cross-turn loop mitigated — wake appends as user message
-  // creating turn+1. With history-based verdict, a successful next turn will
-  // yield `ok` and not chain; repeated `needs-attention`/`off-track` respects
-  // the per-turn cap above on its own turn.
+  // Cross-turn immuneTurns fuse (oh-my-pi advisor.immuneTurns:3): after a
+  // successful wake, downgrade next N primary turns to aside (log but skip wake)
+  // even if verdict is needs-attention/off-track.
+  const last = lastWakeBySession.get(session.id as unknown as string)
+  const immune = config.immuneTurns ?? 3
+  if (last !== undefined && turn - last <= immune) {
+    ctx.logger.info(`dsh-advisor: skip wake for turn ${turn} — immuneTurns ${immune} (last wake turn ${last})`)
+    return
+  }
   const adviceText = `Advisor (turn ${turn} ${parsed.verdict}): ${parsed.advice}${parsed.issues.length > 0 ? `\nIssues: ${parsed.issues.join('; ')}` : ''}`
   const wakeMessage = createUserMessage({
     content: [{ type: 'text', text: adviceText }],
     source: { kind: 'plugin', plugin: 'dsh-advisor' },
   })
   ;(session.append as any)('user/message', wakeMessage, { surfaceOp: 'append' })
+  lastWakeBySession.set(session.id as unknown as string, turn)
   ctx.logger.info(`dsh-advisor: waking main agent for turn ${turn} → next turn with advisor advice`)
 }
