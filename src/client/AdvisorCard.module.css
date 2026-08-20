@@ -1,92 +1,127 @@
-.card {
-  width: 100%;
+/* Compact inset advisor card using the same semantic tokens and spacing as
+   built-in conversation nodes (DisclosureRow header, markdown body). */
+
+.root {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  padding: 12px 16px;
-  background: #e3eefc;
-  border: 1px solid #c3dbf5;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--dsw-alias-state-business-primary) 16%, transparent);
   border-radius: 12px;
-  color: #1a3a5c;
+  background: var(--dsw-alias-state-business-tertiary);
 }
 
 .header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  font-weight: 600;
-  color: #3b6ea5;
+  height: 24px;
 }
 
-.icon {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 20px;
-  height: 20px;
-  border-radius: 999px;
-  font-size: 11px;
-  line-height: 1;
+.leading {
+  width: 16px;
+  height: 16px;
+  margin-right: 6px;
+}
+
+/* 10px state dot in the blue family, matching StateDot halo geometry. */
+.dot {
+  position: relative;
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.dot::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.1;
+}
+
+.dot::after {
+  content: '';
+  position: absolute;
+  inset: 20%;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.dotOk {
+  color: var(--dsw-static-deepseek-400);
+}
+
+.dotNeedsAttention {
+  color: var(--dsw-static-deepseek-500);
+}
+
+.dotOffTrack {
+  color: var(--dsw-static-deepseek-600);
+}
+
+.title {
+  font-weight: 500;
+  color: var(--dsw-alias-state-business-primary);
+}
+
+.titleOk.title {
+  color: var(--dsw-static-deepseek-400);
+}
+
+.titleNeedsAttention.title {
+  color: var(--dsw-static-deepseek-500);
+}
+
+.titleOffTrack.title {
+  color: var(--dsw-static-deepseek-600);
+}
+
+.separator {
   flex: none;
-}
-
-.iconOk {
-  background: #d6e6fb;
-  color: #3b6ea5;
-  border: 1px solid #b8d4f5;
-}
-
-.iconNeedsAttention {
-  background: #c3dbf5;
-  color: #2a5a8f;
-  border: 1px solid #a8c8ef;
-}
-
-.iconOffTrack {
-  background: #8fb8e8;
-  color: #ffffff;
-  border: 1px solid #6fa2de;
-}
-
-.verdict {
-  text-transform: capitalize;
+  width: 2px;
+  height: 2px;
+  margin: 0 8px;
+  border-radius: 1px;
+  background: var(--dsw-alias-label-caption);
 }
 
 .turn {
-  font-weight: 400;
-  color: #5a7fae;
-  margin-left: auto;
+  flex: none;
   font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
 }
 
 .issues {
   margin: 0;
-  padding-left: 18px;
+  padding-left: 22px;
   display: flex;
   flex-direction: column;
   gap: 4px;
   font-size: 13px;
-  line-height: 18px;
-  color: #2a4a6b;
+  line-height: 20px;
+  color: var(--dsw-alias-label-secondary);
 }
 
-.issueItem {
+.issue {
   list-style: disc;
 }
 
+.issue::marker {
+  color: var(--dsw-alias-label-caption);
+}
+
 .advice {
-  font-size: 13px;
-  line-height: 18px;
-  color: #1a3a5c;
-  background: rgba(255, 255, 255, 0.55);
-  border: 1px solid #c3dbf5;
-  border-radius: 8px;
-  padding: 8px 10px;
+  padding-left: 22px;
+  color: var(--dsw-alias-label-primary);
 }
 
 .adviceLabel {
+  display: block;
+  margin-bottom: 4px;
+  font-size: 12px;
+  line-height: 18px;
   font-weight: 600;
-  color: #3b6ea5;
-  margin-right: 6px;
+  color: var(--dsw-alias-state-business-primary);
 }

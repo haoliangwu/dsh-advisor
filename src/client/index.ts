@@ -1,6 +1,6 @@
 /**
  * dsh-advisor, browser half: registers the `advisor` ConversationNodeDefinition
- * and its keyed `conversation.chat.node` renderer as a full-width淡蓝 card.
+ * and its keyed `conversation.chat.node` renderer as a compact inset card.
  */
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 // Type-only: pulls the locale plugin's Context merge (ctx.locale).

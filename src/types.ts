@@ -23,7 +23,7 @@ declare module '@deepseek-ai/dsh-session/types' {
 
 declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
   interface ChatNodeDataMap {
-    /** Full-width淡蓝 advisor card rendered per evaluation. */
+    /** Compact inset advisor card rendered per evaluation. */
     advisor: AdvisorEvalData
   }
 }

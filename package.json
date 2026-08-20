@@ -1,7 +1,7 @@
 {
   "name": "dsh-advisor",
   "version": "0.1.0",
-  "description": "DSH advisor plugin: evaluates turn/error via LLM and renders a full-width淡蓝 advisor card per turn",
+  "description": "DSH advisor plugin: evaluates turn/error via LLM and renders a compact inset advisor card per turn",
   "type": "module",
   "main": "lib/index.js",
   "exports": {
