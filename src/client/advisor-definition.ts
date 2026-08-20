@@ -31,6 +31,7 @@ export const advisorDefinition: ConversationNodeDefinition<AdvisorState> = {
   match: (event) => {
     const data = parseAdvisorData(event as { type: string; data: unknown })
     if (data === null) return null
+    if (data.verdict === 'ok') return null
     return { id: String(data.turn), role: 'start' }
   },
   start: (_context, match) => {
