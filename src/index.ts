@@ -20,20 +20,15 @@ export const inject = ['sessions', 'llm']
 
 /** Default prompt template with `{turn}`, `{goal}` and `{transcript}` placeholders. */
 export const DEFAULT_PROMPT_TEMPLATE = [
-  'You are a senior task advisor. The user gave a goal, the agent just finished a turn.',
-  'Decide if the turn truly advanced the goal or just reported failure. Return STRICT JSON only.',
-  'Required JSON shape: {"verdict":"ok"|"needs-attention"|"off-track","issues":["..."],"advice":"..."}',
-  '- verdict: ok = goal advanced / correctly handled, needs-attention = handleable gap, off-track = drift/wrong path.',
-  '- issues: concise list of what is still missing or wrong.',
-  '- advice: one executable next step (exact command/path to try, or what to ask the user), not a paraphrase of the agent output. Same language as transcript (Chinese if transcript is Chinese).',
-  '- Check: was the user original intent (first user message) satisfied? What concrete artifact is still missing?',
-  '- Check: did the agent verify its own claim (e.g., list dir, show fallback) or only echo the error?',
-  '',
+  'You are a senior task advisor. Decide if the turn advanced the user goal. Output JSON only, no markdown.',
+  'Example: {"verdict":"needs-attention","issues":["file not found not handled"],"advice":"Run ls /tmp to verify path or ask user for correct file location"}',
+  'Required JSON keys: verdict ("ok"|"needs-attention"|"off-track"), issues (string array), advice (one executable next step, same language as transcript).',
+  '- ok = goal advanced or correctly handled with verification; needs-attention = gap; off-track = drift.',
   'Turn: {turn}',
-  'User goal (first message):',
-  '{goal}',
-  'Transcript (recent messages):',
+  'Goal: {goal}',
+  'Transcript:',
   '{transcript}',
+  'JSON:',
 ].join('\n')
 
 /** Plugin config: when to evaluate and how to route the LLM call. */
