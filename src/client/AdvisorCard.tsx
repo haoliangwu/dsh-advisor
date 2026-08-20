@@ -7,21 +7,13 @@ import css from './AdvisorCard.module.css'
 /** Props for the advisor card: one `advisor` chat node plus locale seat. */
 type AdvisorCardProps = PropsRuntime<'conversation.chat.node', 'advisor'> & PropsLocale<'advisor'>
 
-/** Leading verdict dot mapped to the blue family, same 10px halo style as StateDot. */
-function dotClass(verdict: string): string {
-  switch (verdict) {
-    case 'ok': return `${css.dot} ${css.dotOk}`
-    case 'off-track': return `${css.dot} ${css.dotOffTrack}`
-    default: return `${css.dot} ${css.dotNeedsAttention}`
-  }
-}
+const VERDICT_CLASSES = {
+  'ok': { dot: `${css.dot} ${css.dotOk}`, title: `${css.title} ${css.titleOk}` },
+  'off-track': { dot: `${css.dot} ${css.dotOffTrack}`, title: `${css.title} ${css.titleOffTrack}` },
+} as const
 
-function titleClass(verdict: string): string {
-  switch (verdict) {
-    case 'ok': return `${css.title} ${css.titleOk}`
-    case 'off-track': return `${css.title} ${css.titleOffTrack}`
-    default: return `${css.title} ${css.titleNeedsAttention}`
-  }
+function verdictClasses(verdict: string): { dot: string; title: string } {
+  return (VERDICT_CLASSES as Record<string, { dot: string; title: string }>)[verdict] ?? { dot: `${css.dot} ${css.dotNeedsAttention}`, title: `${css.title} ${css.titleNeedsAttention}` }
 }
 
 /**
@@ -31,13 +23,14 @@ function titleClass(verdict: string): string {
 export const AdvisorCard = memo(function AdvisorCard({ node, t }: AdvisorCardProps) {
   const data = node.data
   const verdictKey = `verdict.${data.verdict}` as const
+  const classes = verdictClasses(data.verdict)
   return (
     <div className={css.root}>
       <DisclosureRow
         rowClassName={css.header}
         leadingClassName={css.leading}
-        titleClassName={titleClass(data.verdict)}
-        icon={<span className={dotClass(data.verdict)} aria-hidden />}
+        titleClassName={classes.title}
+        icon={<span className={classes.dot} aria-hidden />}
         title={t(verdictKey)}
         open={false}
         expandable={false}

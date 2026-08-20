@@ -33,13 +33,6 @@ export const DEFAULT_PROMPT_TEMPLATE = [
 
 /** Plugin config: when to evaluate and how to route the LLM call. */
 export interface Config {
-  /**
-   * Deprecated: previously filtered by turn/end reason. Now every turn is
-   * evaluated; this field is ignored for backwards compat (warns if set to
-   * non-default). Use verdict-based wake instead.
-   * @deprecated
-   */
-  evaluateOn?: string[]
   /** Optional explicit provider route; falls back to session's current model. */
   provider?: string
   /** Optional explicit model id; falls back to session's current model. */
@@ -53,7 +46,6 @@ export interface Config {
 }
 
 export const Config: z<Config> = z.object({
-  evaluateOn: z.array(String).default(['error']),
   provider: z.string(),
   model: z.string(),
   promptTemplate: z.string(),
@@ -62,7 +54,7 @@ export const Config: z<Config> = z.object({
 })
 
 /** Valid verdict values the model may produce. */
-const VERDICTS = new Set<AdvisorEvalData['verdict']>(['ok', 'needs-attention', 'off-track'])
+const VERDICTS = ['ok', 'needs-attention', 'off-track'] as const
 
 /**
  * Host plugin body: listen to `session/event` for `turn/end` and evaluate every
@@ -72,11 +64,6 @@ const VERDICTS = new Set<AdvisorEvalData['verdict']>(['ok', 'needs-attention', '
  * @param config - validated plugin config.
  */
 export function apply(ctx: Context, config: Config): void {
-  // evaluateOn is deprecated: log once if caller set a non-default value.
-  const deprecated = config.evaluateOn
-  if (deprecated !== undefined && !(deprecated.length === 1 && deprecated[0] === 'error')) {
-    ctx.logger.warn('dsh-advisor: config.evaluateOn is deprecated and ignored — every turn is now evaluated; wake is controlled by verdict and autoContinue')
-  }
   // oxlint-disable-next-line typescript/no-explicit-any -- cordis event map augmentation needs loose typing until tsc sees the declaration merge
   ;(ctx as any).on('session/event', (session: Session, event: SessionEvent) => {
     if (event.type !== 'turn/end') return
@@ -87,18 +74,22 @@ export function apply(ctx: Context, config: Config): void {
   })
 }
 
+function textFromContent(content: unknown): string {
+  return (content as { type: string; text?: string }[])
+    .filter((b): b is Extract<typeof b, { type: 'text' }> => b.type === 'text')
+    .map((b) => (b as { text: string }).text)
+    .join('\n')
+}
+
 /** Gather a text transcript of recent messages for the prompt. */
 function buildTranscript(session: Session): string {
   try {
     const messages = session.deriveMessages()
     // Keep last 10 messages to bound input.
     const recent = messages.slice(-10)
-    return recent.map((m: { role: string; content: { type: string; text?: string }[] }) => {
+    return recent.map((m: { role: string; content: unknown }) => {
       const role = m.role
-      const text = (m.content as { type: string; text?: string }[])
-        .filter((b): b is Extract<typeof b, { type: 'text' }> => b.type === 'text')
-        .map((b) => (b as { text: string }).text)
-        .join('\n')
+      const text = textFromContent(m.content)
       const tool = (m.content as { type: string }[]).some((b) => b.type === 'tool-call' || b.type === 'tool-result') ? ' [tool]' : ''
       return `${role}${tool}: ${text.slice(0, 2000)}`
     }).join('\n\n') || '(no messages)'
@@ -113,11 +104,7 @@ function buildGoal(session: Session): string {
     const messages = session.deriveMessages()
     const first = messages.find((m: { role: string }) => m.role === 'user')
     if (first === undefined) return '(no goal)'
-    const text = (first.content as { type: string; text?: string }[])
-      .filter((b): b is Extract<typeof b, { type: 'text' }> => b.type === 'text')
-      .map((b) => (b as { text: string }).text)
-      .join('\n')
-      .slice(0, 2000)
+    const text = textFromContent(first.content).slice(0, 2000)
     return text.trim() || '(empty goal)'
   } catch {
     return '(goal unavailable)'
@@ -131,15 +118,6 @@ function resolveRoute(
 ): { provider: string; model: string } | undefined {
   if (config.provider !== undefined && config.model !== undefined) {
     return { provider: config.provider, model: config.model }
-  }
-  if (config.provider !== undefined || config.model !== undefined) {
-    // Partial override: fill the other half from session header/context if possible.
-    const header = session.requestHeader()
-    const ctx = session.requestContext()
-    const provider = config.provider ?? header?.config.provider ?? ctx?.provider
-    const model = config.model ?? header?.config.model ?? ctx?.model
-    if (provider !== undefined && model !== undefined) return { provider, model }
-    return undefined
   }
   const header = session.requestHeader()
   if (header?.config.provider !== undefined && header?.config.model !== undefined) {
@@ -155,19 +133,13 @@ function resolveRoute(
 /** Parse model JSON into AdvisorEvalData, falling back gracefully. */
 function parseEvalJson(raw: string, turn: number): AdvisorEvalData {
   const trimmed = raw.trim()
-  // Try to locate JSON object if model wrapped it in markdown fences.
-  const jsonText = (() => {
-    const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/)
-    if (fenced?.[1] !== undefined) return fenced[1].trim()
-    const start = trimmed.indexOf('{')
-    const end = trimmed.lastIndexOf('}')
-    if (start !== -1 && end !== -1 && end > start) return trimmed.slice(start, end + 1)
-    return trimmed
-  })()
+  const start = trimmed.indexOf('{')
+  const end = trimmed.lastIndexOf('}')
+  const jsonText = start !== -1 && end !== -1 && end > start ? trimmed.slice(start, end + 1) : trimmed
   try {
     const parsed = JSON.parse(jsonText) as Record<string, unknown>
     const verdictRaw = typeof parsed.verdict === 'string' ? parsed.verdict : 'needs-attention'
-    const verdict: AdvisorEvalData['verdict'] = VERDICTS.has(verdictRaw as AdvisorEvalData['verdict'])
+    const verdict: AdvisorEvalData['verdict'] = (VERDICTS as readonly string[]).includes(verdictRaw)
       ? (verdictRaw as AdvisorEvalData['verdict'])
       : 'needs-attention'
     const issues = Array.isArray(parsed.issues)
@@ -210,11 +182,8 @@ async function evaluateTurn(ctx: Context, config: Config, session: Session, turn
       throw new Error(finish.failure.message)
     }
   }
-  const blocks = assembler.blocks() as { type: string; text?: string }[]
-  const text = (blocks as { type: string; text: string }[])
-    .filter((b): b is Extract<typeof b, { type: 'text' }> => b.type === 'text')
-    .map((b) => (b as { type: 'text'; text: string }).text)
-    .join('')
+  const blocks = assembler.blocks() as unknown
+  const text = textFromContent(blocks)
   const parsed = parseEvalJson(text || '{}', turn)
   ;(session.append as any)('advisor/eval', parsed, { ignorable: true })
 

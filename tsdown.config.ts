@@ -12,7 +12,6 @@
  * shell throws "loaded without registering".
  */
 import { readFile } from 'node:fs/promises'
-import { existsSync } from 'node:fs'
 import { basename, dirname, resolve as resolvePath } from 'node:path'
 import { defineConfig } from 'tsdown'
 import { transform } from 'lightningcss'
@@ -22,13 +21,9 @@ const ID = 'dsh-advisor'
 
 /** Browser platform modules the shell seeds into the frozen module table. */
 const PLATFORM_MODULES = [
-  'react', 'react/jsx-runtime', 'react-dom', 'react-dom/client',
-  '@deepseek-ai/cordis',
-  '@deepseek-ai/dsh-client-ui-slots',
-  '@deepseek-ai/dsh-client-web-react',
+  'react', 'react/jsx-runtime',
   '@deepseek-ai/dsh-client-ui-primitives',
-  '@deepseek-ai/dsh-client-attachment',
-  '@deepseek-ai/dsh-client-schema-form',
+  '@deepseek-ai/dsh-client-ui-slots',
 ] as const
 
 /** Runtime store engine exemption (lazy CJS table answers natively). */
@@ -112,7 +107,5 @@ export default defineConfig([
 
 /** Resolve an emitted JS asset import against its source-tree counterpart. */
 function resolveAssetPath(source: string, importer: string): string {
-  const emitted = resolvePath(dirname(importer), source)
-  if (existsSync(emitted)) return emitted
-  return emitted
+  return resolvePath(dirname(importer), source)
 }
