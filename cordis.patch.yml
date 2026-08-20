@@ -1,0 +1,5 @@
+# dsh-advisor bundle: inserts its own host+client plugin row.
+# Applied when a profile lists this bundle in dsh.profile.bundles.
+- insert:
+    - id: dsh-advisor
+      name: dsh-advisor

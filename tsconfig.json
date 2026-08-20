@@ -1,0 +1,49 @@
+{
+  "compilerOptions": {
+    "target": "es2024",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noImplicitAny": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "erasableSyntaxOnly": true,
+    "paths": {
+      "@deepseek-ai/cordis": [
+        "/Users/haoliang.wu/.dsh/profiles/node_modules/@deepseek-ai/cordis/lib/types/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-session": [
+        "/Users/haoliang.wu/.dsh/profiles/node_modules/@deepseek-ai/dsh-session/lib/types/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-session/types": [
+        "/Users/haoliang.wu/.dsh/profiles/node_modules/@deepseek-ai/dsh-session/lib/types/types.d.ts"
+      ],
+      "@deepseek-ai/dsh-invariants": [
+        "/Users/haoliang.wu/.dsh/profiles/node_modules/@deepseek-ai/dsh-invariants/lib/types/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-llm": [
+        "/Users/haoliang.wu/.dsh/profiles/node_modules/@deepseek-ai/dsh-llm/lib/types/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-client-runtime/client": [
+        "/Users/haoliang.wu/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-runtime/lib/types/client/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-client-ui-conversation/client": [
+        "/Users/haoliang.wu/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/types/client/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-client-ui-primitives": [
+        "/Users/haoliang.wu/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-ui-primitives/lib/types/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-client-locale/client": [
+        "/Users/haoliang.wu/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-locale/lib/types/client/index.d.ts"
+      ],
+      "@deepseek-ai/dsh-client-ui-slots": [
+        "/Users/haoliang.wu/.dsh/profiles/node_modules/@deepseek-ai/dsh-client-ui-slots/lib/types/index.d.ts"
+      ]
+    }
+  },
+  "include": ["src"]
+}
