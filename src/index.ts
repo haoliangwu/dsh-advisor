@@ -41,6 +41,10 @@ export interface Config {
   model?: string
   /** Optional prompt template with `{turn}` and `{transcript}` placeholders. */
   promptTemplate?: string
+  /** When true, wake the main agent after advisor evaluation (opt-in, default false). */
+  autoContinue?: boolean
+  /** Max advisor wakes per turn (1-5, default 1). */
+  maxAdvisorRounds?: number
 }
 
 export const Config: z<Config> = z.object({
@@ -48,6 +52,8 @@ export const Config: z<Config> = z.object({
   provider: z.string(),
   model: z.string(),
   promptTemplate: z.string(),
+  autoContinue: z.boolean().default(false),
+  maxAdvisorRounds: z.number().step(1).min(1).max(5).default(1),
 })
 
 /** Valid verdict values the model may produce. */
@@ -62,15 +68,34 @@ const VERDICTS = new Set<AdvisorEvalData['verdict']>(['ok', 'needs-attention', '
 export function apply(ctx: Context, config: Config): void {
   // oxlint-disable-next-line typescript/no-explicit-any -- cordis event map augmentation needs loose typing until tsc sees the declaration merge
   ;(ctx as any).on('session/event', (session: Session, event: SessionEvent) => {
-    if (event.type !== 'turn/end') return
-    const on = config.evaluateOn ?? ['error']
-    const reasonKind = (event.data as { reason: { kind: string } }).reason.kind
-    const should = on.includes('all') || on.includes(reasonKind)
-    if (!should) return
-    const turn = (event.data as { turn: number }).turn
-    void evaluateTurn(ctx, config, session, turn).catch((error: unknown) => {
-      ctx.logger.warn(`dsh-advisor: evaluation for turn ${turn} failed: ${String(error)}`)
-    })
+    if (event.type === 'turn/end') {
+      const on = config.evaluateOn ?? ['error']
+      const reasonKind = (event.data as { reason: { kind: string } }).reason.kind
+      const should = on.includes('all') || on.includes(reasonKind)
+      if (!should) return
+      const turn = (event.data as { turn: number }).turn
+      void evaluateTurn(ctx, config, session, turn, reasonKind).catch((error: unknown) => {
+        ctx.logger.warn(`dsh-advisor: evaluation for turn ${turn} failed: ${String(error)}`)
+      })
+      return
+    }
+    // Debug hook for empirical error test: user sends "/test-error" → inject a synthetic turn/end error so the error-only gate can be verified without a real LLM failure.
+    if (event.type === 'user/message') {
+      const text = (event.data as unknown as { message: { content: { type: string; text?: string }[] } }).message?.content
+        ?.filter((b) => b.type === 'text')
+        .map((b) => (b as { text: string }).text)
+        .join('')
+        .trim()
+      if (text !== '/test-error') return
+      const turn = session.events.filter((e) => e.type === 'turn/start').length + 1
+      // Synthesize a turn that both starts and ends with error; marked ignorable=false so it is required history, matching real error semantics.
+      try {
+        session.append('turn/start', { turn } as never)
+        ;(session.append as any)('turn/end', { turn, reason: { kind: 'error', error: { message: 'synthetic test error: file not found', code: 'TEST_ERROR' } } } as never)
+      } catch (error: unknown) {
+        ctx.logger.warn(`dsh-advisor: synthetic error inject failed: ${String(error)}`)
+      }
+    }
   })
 }
 
@@ -151,7 +176,7 @@ function parseEvalJson(raw: string, turn: number): AdvisorEvalData {
 }
 
 /** Evaluate one turn via LLM and append the `advisor/eval` event. */
-async function evaluateTurn(ctx: Context, config: Config, session: Session, turn: number): Promise<void> {
+async function evaluateTurn(ctx: Context, config: Config, session: Session, turn: number, reasonKind?: string): Promise<void> {
   const route = resolveRoute(config, session)
   if (route === undefined) {
     ctx.logger.warn(`dsh-advisor: skip turn ${turn} — no provider/model available (configure provider/model or ensure session has a request header)`)
@@ -186,4 +211,28 @@ async function evaluateTurn(ctx: Context, config: Config, session: Session, turn
     .join('')
   const parsed = parseEvalJson(text || '{}', turn)
   ;(session.append as any)('advisor/eval', parsed, { ignorable: true })
+
+  // BC: optional wake of the main agent, default passive (no wake) to avoid loop.
+  if (config.autoContinue !== true) return
+  // Only auto-continue on error turns; a wake turn itself will be `completed`
+  // and thus not re-trigger, preventing infinite loops when evaluateOn includes 'all'.
+  // Documented mitigation: if user sets evaluateOn=['all'] + autoContinue, the
+  // wake turn (completed) still won't wake again because we gate on error only.
+  if (reasonKind !== 'error') return
+  // Break condition 1: cap wakes per turn to prevent infinite retry on same turn.
+  const count = session.events.filter((e) => e.type === 'advisor/eval' && (e.data as unknown as { turn: number }).turn === turn).length
+  const maxRounds = config.maxAdvisorRounds ?? 1
+  if (count >= maxRounds) {
+    ctx.logger.info(`dsh-advisor: skip wake for turn ${turn} — maxAdvisorRounds ${maxRounds} reached (count=${count})`)
+    return
+  }
+  // Break condition 2 is same count check; cross-turn loop is mitigated by the
+  // error-only gate above (wake turn is not error, so it won't chain).
+  const adviceText = `Advisor (turn ${turn} ${parsed.verdict}): ${parsed.advice}${parsed.issues.length > 0 ? `\nIssues: ${parsed.issues.join('; ')}` : ''}`
+  const wakeMessage = createUserMessage({
+    content: [{ type: 'text', text: adviceText }],
+    source: { kind: 'plugin', plugin: 'dsh-advisor' },
+  })
+  ;(session.append as any)('user/message', wakeMessage, { surfaceOp: 'append' })
+  ctx.logger.info(`dsh-advisor: waking main agent for turn ${turn} → next turn with advisor advice`)
 }
