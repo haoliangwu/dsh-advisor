@@ -23,10 +23,12 @@ const lastWakeBySession = new Map<string, number>()
 
 /** Default prompt template with `{turn}`, `{goal}` and `{transcript}` placeholders. */
 export const DEFAULT_PROMPT_TEMPLATE = [
-  'You are a senior task advisor. Decide if the turn advanced the user goal. Output JSON only, no markdown.',
-  'Example: {"verdict":"needs-attention","issues":["file not found not handled"],"advice":"Run ls /tmp to verify path or ask user for correct file location"}',
-  'Required JSON keys: verdict ("ok"|"needs-attention"|"off-track"), issues (string array), advice (one executable next step, same language as transcript).',
-  '- ok = goal advanced or correctly handled with verification; needs-attention = gap; off-track = drift.',
+  'You are a senior task advisor. Do NOT summarize the turn — the main agent already did. Only surface what the main agent missed.',
+  'Output JSON only, no markdown. Default to {"verdict":"ok","issues":[],"advice":""} when no concrete gap exists.',
+  'Only use needs-attention/off-track when you have concrete evidence the main agent missed: error/tool failure ignored, file/test claim unverified, goal not actually advanced despite the agent saying it was, or drift the agent did not notice. Do NOT repeat the main agent conclusion.',
+  'If tools (read/grep/glob) are available, verify file/test claims before flagging — do not hallucinate.',
+  'Required JSON keys: verdict ("ok"|"needs-attention"|"off-track"), issues (string array, empty when ok), advice (one executable next step in transcript language, empty when ok).',
+  '- ok = no noteworthy gap — stay silent; needs-attention = concrete gap/risk missed; off-track = drift missed.',
   'Turn: {turn}',
   'Goal: {goal}',
   'Transcript:',
@@ -257,13 +259,18 @@ async function evaluateTurn(ctx: Context, config: Config, session: Session, turn
     text = textFromContent(blocks)
   }
   const parsed = parseEvalJson(text || '{}', turn)
+  // Silent unless noteworthy: skip log/render when verdict is ok.
+  if (parsed.verdict === 'ok') {
+    ctx.logger.info(`dsh-advisor: turn ${turn} ok — skip (silent)`)
+    return
+  }
   // ponytail: JSON-in-text over feedback/record to avoid main-repo SessionEvent patch; add dedicated advisor/eval type with ignorable when upstreaming
   session.append('feedback/record', { text: '__advisor__' + JSON.stringify(parsed) })
 
   // History-based self-decision wake: advisor verdict drives continuation.
   // Default passive (no wake) to avoid loop; opt-in via autoContinue.
+  // verdict ok already returned above (silent), so no ok check here.
   if (config.autoContinue !== true) return
-  if (parsed.verdict === 'ok') return
   // Break condition 1: cap wakes per turn (prevents infinite retry if same turn re-evaluated).
   const count = session.events.filter((e) => {
     if (e.type !== 'feedback/record') return false
