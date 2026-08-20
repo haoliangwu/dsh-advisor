@@ -2,9 +2,7 @@
 
 <p align="center">Turn advisor for DSH — evaluates each turn (default: on error) via LLM and renders a full-width淡蓝 advice card in the chat.</p>
 
-<p align="center"><img src="docs/advisor-card.png" alt="Advisor card in chat" width="640"></p>
-
-> Screenshot placeholder — add `docs/advisor-card.png` after first run.
+<p align="center"><img src="docs/advisor-card.png" alt="Advisor card — full-width light-blue card with verdict OK and advice" width="640"></p>
 
 A host+client bundle plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). The host half listens to `session/event` for `turn/end`, calls `ctx.llm.stream()` with a configurable prompt, and appends `advisor/eval` (log-only). The browser half registers a `ConversationNodeDefinition` for `advisor/eval` and a keyed `conversation.chat.node` renderer (`advisor`) — a full-width card in harmonious blue (#e3eefc/#3b6ea5, no traffic-light colors) with verdict icon differentiation.
 
