@@ -18,15 +18,20 @@ export const name = 'dsh-advisor'
 /** Required services: session store and LLM streaming. */
 export const inject = ['sessions', 'llm']
 
-/** Default prompt template with `{turn}` and `{transcript}` placeholders. */
+/** Default prompt template with `{turn}`, `{goal}` and `{transcript}` placeholders. */
 export const DEFAULT_PROMPT_TEMPLATE = [
-  'You are a task advisor for an AI coding assistant. Evaluate the turn and return STRICT JSON only.',
+  'You are a senior task advisor. The user gave a goal, the agent just finished a turn.',
+  'Decide if the turn truly advanced the goal or just reported failure. Return STRICT JSON only.',
   'Required JSON shape: {"verdict":"ok"|"needs-attention"|"off-track","issues":["..."],"advice":"..."}',
-  '- verdict: ok = on track, needs-attention = minor issues, off-track = needs correction.',
-  '- issues: concise list of problems or empty array.',
-  '- advice: one short actionable suggestion in the same language as the transcript (Chinese if transcript is Chinese).',
+  '- verdict: ok = goal advanced / correctly handled, needs-attention = handleable gap, off-track = drift/wrong path.',
+  '- issues: concise list of what is still missing or wrong.',
+  '- advice: one executable next step (exact command/path to try, or what to ask the user), not a paraphrase of the agent output. Same language as transcript (Chinese if transcript is Chinese).',
+  '- Check: was the user original intent (first user message) satisfied? What concrete artifact is still missing?',
+  '- Check: did the agent verify its own claim (e.g., list dir, show fallback) or only echo the error?',
   '',
   'Turn: {turn}',
+  'User goal (first message):',
+  '{goal}',
   'Transcript (recent messages):',
   '{transcript}',
 ].join('\n')
@@ -107,6 +112,23 @@ function buildTranscript(session: Session): string {
   }
 }
 
+/** First user message as goal (for target-contrast prompt). */
+function buildGoal(session: Session): string {
+  try {
+    const messages = session.deriveMessages()
+    const first = messages.find((m: { role: string }) => m.role === 'user')
+    if (first === undefined) return '(no goal)'
+    const text = (first.content as { type: string; text?: string }[])
+      .filter((b): b is Extract<typeof b, { type: 'text' }> => b.type === 'text')
+      .map((b) => (b as { text: string }).text)
+      .join('\n')
+      .slice(0, 2000)
+    return text.trim() || '(empty goal)'
+  } catch {
+    return '(goal unavailable)'
+  }
+}
+
 /** Resolve the LLM route: explicit config or session's last request header/context. */
 function resolveRoute(
   config: Config,
@@ -172,7 +194,8 @@ async function evaluateTurn(ctx: Context, config: Config, session: Session, turn
   }
   const template = config.promptTemplate ?? DEFAULT_PROMPT_TEMPLATE
   const transcript = buildTranscript(session)
-  const prompt = template.replaceAll('{turn}', String(turn)).replaceAll('{transcript}', transcript)
+  const goal = buildGoal(session)
+  const prompt = template.replaceAll('{turn}', String(turn)).replaceAll('{goal}', goal).replaceAll('{transcript}', transcript)
   const messages = [createUserMessage({
     content: [{ type: 'text', text: prompt }],
     source: { kind: 'plugin', plugin: 'dsh-advisor' },
