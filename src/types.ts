@@ -14,10 +14,13 @@ export interface AdvisorEvalData {
   advice: string
 }
 
+// Advisor evals are stored as `feedback/record` with JSON-in-text and `__advisor__` marker prefix
+// to avoid a main-repo SessionEvent patch. The ChatNodeDataMap `advisor` remains the view kind.
+// Local SessionEventMap augmentation for `feedback/record` keeps `tsc --noEmit` aware when the
+// host's command-feedback types are not on the synthetic profile path; at runtime the host already knows it.
 declare module '@deepseek-ai/dsh-session/types' {
   interface SessionEventMap {
-    /** Log-only advisor evaluation for one turn (ignorable — reconstruction does not depend on it). */
-    'advisor/eval': AdvisorEvalData
+    'feedback/record': { text: string }
   }
 }
 

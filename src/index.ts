@@ -257,14 +257,24 @@ async function evaluateTurn(ctx: Context, config: Config, session: Session, turn
     text = textFromContent(blocks)
   }
   const parsed = parseEvalJson(text || '{}', turn)
-  ;(session.append as any)('advisor/eval', parsed, { ignorable: true })
+  // ponytail: JSON-in-text over feedback/record to avoid main-repo SessionEvent patch; add dedicated advisor/eval type with ignorable when upstreaming
+  session.append('feedback/record', { text: '__advisor__' + JSON.stringify(parsed) })
 
   // History-based self-decision wake: advisor verdict drives continuation.
   // Default passive (no wake) to avoid loop; opt-in via autoContinue.
   if (config.autoContinue !== true) return
   if (parsed.verdict === 'ok') return
   // Break condition 1: cap wakes per turn (prevents infinite retry if same turn re-evaluated).
-  const count = session.events.filter((e) => e.type === 'advisor/eval' && (e.data as unknown as { turn: number }).turn === turn).length
+  const count = session.events.filter((e) => {
+    if (e.type !== 'feedback/record') return false
+    const text = (e.data as { text: string }).text
+    if (typeof text !== 'string' || !text.startsWith('__advisor__')) return false
+    try {
+      return (JSON.parse(text.slice('__advisor__'.length)) as { turn: number }).turn === turn
+    } catch {
+      return false
+    }
+  }).length
   const maxRounds = config.maxAdvisorRounds ?? 1
   if (count >= maxRounds) {
     ctx.logger.info(`dsh-advisor: skip wake for turn ${turn} — maxAdvisorRounds ${maxRounds} reached (count=${count})`)
